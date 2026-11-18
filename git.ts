@@ -227,7 +227,9 @@ export function writePack(entries: Array<{ type: string; data: Buffer }>): Buffe
   const typeCodes: Record<string, number> = { commit: 1, tree: 2, blob: 3, tag: 4 };
   for (const entry of entries) {
     const typeCode = typeCodes[entry.type] ?? 0;
-    const deflated = deflateSync(entry.data, { level: 6 });
+    // Level 1: a pack's objects are small and the trial times the exchange, not the bytes on
+    // the wire — the fastest deflate wins, and the client inflates either level identically.
+    const deflated = deflateSync(entry.data, { level: 1 });
     const size = entry.data.length;
     const head: number[] = [];
     let first = (typeCode << 4) | (size & 0x0f);
