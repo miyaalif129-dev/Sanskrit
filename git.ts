@@ -800,6 +800,9 @@ function v0Advertisement(service: string, caps: string[], forge: Forge, repo: Re
       if (ref.peeled !== null) items.push({ kind: 'line', data: Buffer.from(`${ref.peeled} ${ref.name}^{}\n`, 'utf8') });
     }
   }
+  // A real server ends the advertisement with a flush after the ref lines; without it the
+  // client waits for more refs and dies with "the remote end hung up".
+  items.push({ kind: 'flush' });
   return joinPktLines(items);
 }
 
@@ -906,23 +909,32 @@ export async function gitUploadPack(forge: Forge, owner: string, name: string, b
         const req = fetchArgs(items);
         const selection = selectFetch(forge, repo, req);
         const out: Buffer[] = [];
-        const ackLines: string[] = [];
-        for (const have of req.haves) {
-          if (req.wants.some((want) => isAncestor(forge, repo, have, want))) ackLines.push(`ACK ${have}`);
+        // The acknowledgments section exists only when the client sent `have` lines: a fresh
+        // clone (no haves) goes straight to the packfile, as git itself does. The kit client
+        // reads the sections the same way, so this is what both sides expect.
+        if (req.haves.length > 0) {
+          const ackLines: string[] = [];
+          for (const have of req.haves) {
+            if (req.wants.some((want) => isAncestor(forge, repo, have, want))) ackLines.push(`ACK ${have}`);
+          }
+          if (ackLines.length === 0) ackLines.push('NAK');
+          out.push(pktLine('acknowledgments\n'));
+          for (const line of ackLines) out.push(pktLine(`${line}\n`));
+          if (selection.objects.length > 0) out.push(pktLine('ready\n'));
+          out.push(FLUSH_PKT);
         }
-        if (ackLines.length === 0) ackLines.push('NAK');
-        out.push(Buffer.from('acknowledgments\n', 'utf8'));
-        for (const line of ackLines) out.push(pktLine(`${line}\n`));
-        if (selection.objects.length > 0) out.push(pktLine('ready\n'));
-        out.push(FLUSH_PKT);
         if (req.depth !== null || req.shallow.length > 0) {
-          out.push(Buffer.from('shallow-info\n', 'utf8'));
+          out.push(pktLine('shallow-info\n'));
           for (const oid of selection.shallow) out.push(pktLine(`shallow ${oid}\n`));
           for (const oid of selection.unshallow) out.push(pktLine(`unshallow ${oid}\n`));
           out.push(FLUSH_PKT);
         }
-        out.push(Buffer.from('packfile\n', 'utf8'));
+        out.push(pktLine('packfile\n'));
         out.push(sideband(writePack(selection.objects)));
+        // The packfile section ends with a flush, as a real server sends it: the client's
+        // sideband reader treats the flush as the end of the pack, and without it the clone
+        // dies with "the remote end hung up".
+        out.push(FLUSH_PKT);
         return { status: 200, contentType: resultType, body: Buffer.concat(out) };
       }
       return jsonResult(400, { message: `unknown upload-pack command ${command}` });
@@ -943,6 +955,7 @@ export async function gitUploadPack(forge: Forge, owner: string, name: string, b
     for (const oid of selection.shallow) out.push(pktLine(`shallow ${oid}\n`));
     for (const oid of selection.unshallow) out.push(pktLine(`unshallow ${oid}\n`));
     out.push(sideband(writePack(selection.objects)));
+    out.push(FLUSH_PKT);
     return { status: 200, contentType: resultType, body: Buffer.concat(out) };
   } catch (err) {
     return jsonResult(400, { message: err instanceof Error ? err.message : 'bad upload-pack request' });
@@ -1042,7 +1055,9 @@ export async function gitReceivePack(forge: Forge, owner: string, name: string, 
     }
     const reportItems: PktItem[] = reportLines.map((line) => ({ kind: 'line', data: Buffer.from(`${line}\n`, 'utf8') }));
     reportItems.push({ kind: 'flush' });
-    return { status: 200, contentType: resultType, body: sideband(joinPktLines(reportItems)) };
+    // The report travels inside band 1 and ends with its own flush there; a raw flush after
+    // the sideband packets closes the response, as a real server sends it.
+    return { status: 200, contentType: resultType, body: Buffer.concat([sideband(joinPktLines(reportItems)), FLUSH_PKT]) };
   } catch (err) {
     return jsonResult(400, { message: err instanceof Error ? err.message : 'bad receive-pack request' });
   }

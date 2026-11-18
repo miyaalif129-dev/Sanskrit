@@ -461,7 +461,8 @@ export function handleRest(forge: Forge, ctx: RestContext): RestResult {
       const color = asString(ctx.body.color) ?? 'ededed';
       const existing = repo.labels.get(name);
       if (existing !== undefined) return created({ name: existing.name, color: existing.color, description: '' });
-      return created({ name, color, description: '' });
+      const label = forge.addLabel(repo, name, color);
+      return created({ name: label.name, color: label.color, description: '' });
     }
     if (ctx.method === 'GET') {
       return ok([...repo.labels.values()].map((label) => ({ name: label.name, color: label.color, description: '' })));
