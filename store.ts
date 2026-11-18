@@ -26,26 +26,36 @@ export const VIEWER = Object.freeze({
 /** Fallback opening time (2025-01-01T00:00:00Z) when the env gives no usable MAKEFUN_TRIAL_NOW. */
 const FALLBACK_EPOCH_SEC = 1735689600;
 
-/** The trial's opening time, in whole seconds since the epoch. */
+/** The trial's opening time, in whole seconds since the epoch (parsed once; the env never changes). */
+let cachedEpochSec: number | null = null;
 export function trialEpochSec(): number {
+  if (cachedEpochSec !== null) return cachedEpochSec;
   const raw = (process.env.MAKEFUN_TRIAL_NOW ?? '').trim();
+  let value = FALLBACK_EPOCH_SEC;
   if (raw !== '') {
     const parsed = Date.parse(raw);
-    if (!Number.isNaN(parsed)) return Math.floor(parsed / 1000);
-    const asNumber = Number(raw);
-    if (Number.isFinite(asNumber)) return asNumber > 1e12 ? Math.floor(asNumber / 1000) : Math.floor(asNumber);
+    if (!Number.isNaN(parsed)) value = Math.floor(parsed / 1000);
+    else {
+      const asNumber = Number(raw);
+      if (Number.isFinite(asNumber)) value = asNumber > 1e12 ? Math.floor(asNumber / 1000) : Math.floor(asNumber);
+    }
   }
-  return FALLBACK_EPOCH_SEC;
+  cachedEpochSec = value;
+  return value;
 }
 
 /** The trial's opening time as an ISO-8601 string, for created_at / merged_at fields. */
+let cachedIso: string | null = null;
 export function trialIso(): string {
-  return new Date(trialEpochSec() * 1000).toISOString();
+  if (cachedIso === null) cachedIso = new Date(trialEpochSec() * 1000).toISOString();
+  return cachedIso;
 }
 
 /** The identity line a REST-made commit carries (author and committer are the same). */
+let cachedIdentity: string | null = null;
 export function identityLine(): string {
-  return `${VIEWER.name} <${VIEWER.email}> ${trialEpochSec()} +0000`;
+  if (cachedIdentity === null) cachedIdentity = `${VIEWER.name} <${VIEWER.email}> ${trialEpochSec()} +0000`;
+  return cachedIdentity;
 }
 
 /** SHA-1 of a git object header plus its bytes — the object's id. */

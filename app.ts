@@ -60,20 +60,12 @@ function sendEmpty(res: ServerResponse, status: number): void {
   res.end();
 }
 
-/** The path of a request URL, or '/' when it does not parse (never a throw from a request). */
-function pathOf(req: IncomingMessage): string {
+/** The request URL, parsed once (never a throw from a request). */
+function urlOf(req: IncomingMessage): URL {
   try {
-    return new URL(req.url ?? '/', 'http://entry').pathname;
+    return new URL(req.url ?? '/', 'http://entry');
   } catch {
-    return '/';
-  }
-}
-
-function queryOf(req: IncomingMessage): URLSearchParams {
-  try {
-    return new URL(req.url ?? '/', 'http://entry').searchParams;
-  } catch {
-    return new URLSearchParams();
+    return new URL('/', 'http://entry');
   }
 }
 
@@ -106,7 +98,9 @@ export function createApp(): Server {
   return createServer((req: IncomingMessage, res: ServerResponse) => {
     void (async () => {
       try {
-        const path = pathOf(req);
+        const url = urlOf(req);
+        const path = url.pathname;
+        const query = url.searchParams;
         const method = req.method ?? 'GET';
 
         // The env's boot check calls this twice: 200 {"ok":true}.
@@ -123,7 +117,7 @@ export function createApp(): Server {
           const endpoint = gitMatch[3] as string;
           const v2 = req.headers['git-protocol'] === 'version=2';
           if (endpoint === 'info/refs' && method === 'GET') {
-            const service = queryOf(req).get('service') ?? '';
+            const service = query.get('service') ?? '';
             const result = await gitInfoRefs(forge, owner, repoName, service, v2);
             if (result.contentType === 'application/json') sendJson(res, result.status, JSON.parse(result.body.toString('utf8')));
             else sendBytes(res, result.status, result.contentType, result.body);
@@ -186,7 +180,8 @@ export function createApp(): Server {
             sendJson(res, 401, { message: 'Bad credentials' });
             return;
           }
-          const raw = await readBody(req);
+          // GETs carry no body; reading one would only cost a tick per request.
+          const raw = method === 'GET' || method === 'HEAD' ? Buffer.alloc(0) : await readBody(req);
           const { body, bodyError } = parseJsonBody(raw);
           const stripped = path === '/api/v3' || path === '/api/v3/' ? '' : path.slice('/api/v3/'.length);
           const segments = stripped === '' ? [] : stripped.split('/').map((segment) => decodeURIComponent(segment));
@@ -195,7 +190,7 @@ export function createApp(): Server {
             method,
             path,
             segments,
-            query: queryOf(req),
+            query,
             origin: `http://${host}`,
             body,
             bodyError,
