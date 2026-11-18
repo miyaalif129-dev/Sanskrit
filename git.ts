@@ -654,7 +654,11 @@ export function selectFetch(forge: Forge, repo: Repo, req: FetchRequest): FetchS
       }
     }
   };
-  for (const have of req.haves) addClosure(have, true);
+  // A `have` the client holds completely contributes its whole closure. A `have` that is also
+  // a shallow boundary contributes only itself and its tree: the client has the commit but not
+  // its parents, which is exactly what a deepen has to deliver.
+  const shallowSet = new Set(req.shallow);
+  for (const have of req.haves) addClosure(have, !shallowSet.has(have));
   for (const boundary of req.shallow) addClosure(boundary, false);
 
   // Resolve wants to commits, keeping tag objects themselves on the side.
@@ -888,7 +892,9 @@ export async function gitUploadPack(forge: Forge, owner: string, name: string, b
         const out: PktItem[] = [];
         const refs = sortedRefs(forge, repo);
         const headTip = forge.headTip(repo);
-        const includeHead = args.prefixes.length === 0 || args.prefixes.some((prefix) => `refs/heads/${repo.defaultBranch}`.startsWith(prefix));
+        // HEAD is listed only when a prefix matches HEAD itself (the client asks for it with
+        // `ref-prefix HEAD` when it wants it); a prefix like refs/heads/ does not match HEAD.
+        const includeHead = args.prefixes.length === 0 || args.prefixes.some((prefix) => 'HEAD'.startsWith(prefix));
         if (refs.length === 0) {
           if (args.unborn) out.push({ kind: 'line', data: Buffer.from(`unborn HEAD${args.symrefs ? ` symref-target:refs/heads/${repo.defaultBranch}` : ''}\n`, 'utf8') });
         } else {
